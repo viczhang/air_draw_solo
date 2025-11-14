@@ -86,12 +86,7 @@
         drawingActive = false;
         setStatus('Stopped');
         startBtn.textContent = 'Start Camera';
-        return;
-      }
-      try {
-        await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      } catch (e) {
-        setStatus('Camera permission denied');
+        window.removeEventListener('resize', resize);
         return;
       }
       setStatus('Starting...');
