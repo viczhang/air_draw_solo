@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Air Draw with Right Hand</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #111; color: #eee; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; }
+    .wrap { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+    #video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.35; }
+    #canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; z-index: 1; }
+    .toolbar { position: absolute; left: 12px; top: 12px; display: flex; gap: 8px; z-index: 10; }
+    .toolbar button { background: #222; color: #eee; border: 1px solid #444; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+    .status { position: absolute; right: 12px; top: 12px; padding: 8px 12px; background: #222; border: 1px solid #444; border-radius: 8px; z-index: 10; }
+    .legend { position: absolute; left: 12px; bottom: 12px; padding: 8px 12px; background: #222; border: 1px solid #444; border-radius: 8px; z-index: 10; opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <video id="video" playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div class="toolbar">
+      <button id="startBtn">Start Camera</button>
+      <button id="clearBtn">Clear</button>
+    </div>
+    <div class="status" id="status">Idle</div>
+    <div class="legend">Open hand = draw. Close hand = stop.</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusEl = document.getElementById('status');
+
+    let camera = null;
+    let drawingActive = false;
+    let lastPoint = null;
+    let canvasW = 0, canvasH = 0;
+    const lastPoints = { Left: null, Right: null };
+    let hands = null;
+    let started = false;
+
+    function resize() {
+      const rect = video.getBoundingClientRect();
+      const width = Math.floor(rect.width);
+      const height = Math.floor(rect.height);
+      const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvasW = width;
+      canvasH = height;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    clearBtn.addEventListener('click', () => {
+      const prev = ctx.globalCompositeOperation;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, canvasW, canvasH);
+      ctx.globalCompositeOperation = prev;
+      lastPoint = null;
+      lastPoints.Left = null;
+      lastPoints.Right = null;
+    });
+
+    startBtn.addEventListener('click', async () => {
+      if (started) {
+        if (camera && camera.stop) camera.stop();
+        camera = null;
+        if (hands && hands.close) hands.close();
+        hands = null;
+        const stream = video.srcObject;
+        if (stream && stream.getTracks) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+        video.srcObject = null;
+        started = false;
+        drawingActive = false;
+        setStatus('Stopped');
+        startBtn.textContent = 'Start Camera';
+        return;
+      }
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      } catch (e) {
+        setStatus('Camera permission denied');
+        return;
+      }
+      setStatus('Starting...');
+      hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+      hands.setOptions({
+        maxHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7,
+        selfieMode: true
+      });
+
+      hands.onResults(onResults);
+
+      camera = new Camera(video, {
+        onFrame: async () => {
+          await hands.send({ image: video });
+        },
+        width: 1280,
+        height: 720
+      });
+      camera.start();
+      resize();
+      window.addEventListener('resize', resize);
+      started = true;
+      startBtn.textContent = 'Stop Camera';
+      setStatus('Camera started');
+    });
+
+    function onResults(results) {
+      const lmList = results.multiHandLandmarks || [];
+      const hdList = results.multiHandedness || [];
+      if (lmList.length === 0) {
+        drawingActive = false;
+        lastPoints.Left = null;
+        lastPoints.Right = null;
+        setStatus('No hands');
+        return;
+      }
+
+      let anyDrawing = false;
+      for (let i = 0; i < lmList.length; i++) {
+        const lm = lmList[i];
+        const label = hdList[i] && hdList[i].label ? hdList[i].label : 'Unknown';
+        const indexExtended = isIndexExtended(lm);
+        const closed = isClosedFist(lm);
+        const tip = lm[8];
+        const x = tip.x * canvasW;
+        const y = tip.y * canvasH;
+
+        if (indexExtended || !closed) {
+          drawToFor(label, x, y);
+          anyDrawing = true;
+        } else {
+          lastPoints[label] = null;
+        }
+      }
+      drawingActive = anyDrawing;
+      setStatus(anyDrawing ? 'Drawing (either hand)' : 'Paused');
+    }
+
+    function drawTo(x, y) {
+      if (lastPoint == null) {
+        ctx.fillStyle = '#00e0ff';
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        lastPoint = { x, y };
+        return;
+      }
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#00e0ff';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(lastPoint.x, lastPoint.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      lastPoint = { x, y };
+    }
+
+    function drawToFor(label, x, y) {
+      if (!lastPoints[label]) {
+        ctx.fillStyle = '#00e0ff';
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        lastPoints[label] = { x, y };
+        return;
+      }
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = label === 'Left' ? '#00e0ff' : '#ff6a00';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(lastPoints[label].x, lastPoints[label].y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      lastPoints[label] = { x, y };
+    }
+
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dz = (a.z || 0) - (b.z || 0);
+      return Math.sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    function isIndexExtended(lm) {
+      const wrist = lm[0];
+      const tip = lm[8];
+      const mcp = lm[5];
+      const tipDist = dist(tip, wrist);
+      const mcpDist = dist(mcp, wrist);
+      return tipDist > mcpDist + 0.01;
+    }
+
+    function isClosedFist(lm) {
+      const wrist = lm[0];
+      const fingers = [
+        { tip: lm[8], mcp: lm[5] },
+        { tip: lm[12], mcp: lm[9] },
+        { tip: lm[16], mcp: lm[13] },
+        { tip: lm[20], mcp: lm[17] }
+      ];
+      let curledCount = 0;
+      for (const f of fingers) {
+        const tipDist = dist(f.tip, wrist);
+        const mcpDist = dist(f.mcp, wrist);
+        if (tipDist < mcpDist - 0.02) curledCount++;
+      }
+      return curledCount >= 3;
+    }
+  </script>
+</body>
+</html>
