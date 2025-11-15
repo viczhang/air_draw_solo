@@ -44,6 +44,7 @@
     const lastPoints = { Left: null, Right: null };
     let hands = null;
     let started = false;
+    let hasInitialized = false;
 
     function resize() {
       const rect = video.getBoundingClientRect();
@@ -84,12 +85,14 @@
         video.srcObject = null;
         started = false;
         drawingActive = false;
+        hasInitialized = false;
         setStatus('Stopped');
         startBtn.textContent = 'Start Camera';
         window.removeEventListener('resize', resize);
         return;
       }
       setStatus('Starting...');
+      setStatus('Loading hand tracking assets...');
       hands = new Hands({ locateFile: (file) => `node_modules/@mediapipe/hands/${file}` });
       hands.setOptions({
         maxHands: 2,
@@ -117,6 +120,11 @@
     });
 
     function onResults(results) {
+      if (!hasInitialized) {
+        hasInitialized = true;
+        setStatus('Ready to detect hands');
+        return;
+      }
       const lmList = results.multiHandLandmarks || [];
       const hdList = results.multiHandedness || [];
       if (lmList.length === 0) {
