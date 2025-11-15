@@ -1,0 +1,16 @@
+{
+  "name": "trae_solo_1",
+  "version": "1.0.0",
+  "description": "Minimal HTML5 web app that uses your device camera and MediaPipe Hands to let you draw in the air with your index finger. Open your hand to draw; make a fist to pause. Either hand can draw, and drawings stay on screen even when the camera is stopped.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
+    "@mediapipe/hands": "^0.4.1675469240"
+  }
+}
